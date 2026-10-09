@@ -8,9 +8,10 @@ export async function GET(req: NextRequest) {
   const authUserId = getAuthUserId(req);
   await resolveUser(req, authUserId);
 
-  const count = await prisma.adCampaign.count({
-    where: { status: 'active', clicksServed: { lt: prisma.adCampaign.fields.clicksPurchased } },
-  });
+    const rows = await prisma.$queryRaw<{ n: number }[]>`
+    SELECT COUNT(*)::int AS n FROM "AdCampaign"
+    WHERE status = 'active' AND "clicksServed" < "clicksPurchased"`;
+  const count = rows[0]?.n ?? 0;
 
   return NextResponse.json({ hasAds: count > 0, count });
 }
