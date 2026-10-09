@@ -3,37 +3,31 @@ import { prisma } from '@/lib/server/db';
 import { resolveUser } from '@/lib/server/ipUser';
 import { getAuthUserId } from '@/lib/server/auth';
 
-// Must match AD_DURATION_SEC in the engine (src/lib/adsConfig.ts).
+// Must match src/lib/adsConfig.ts and src/lib/adCreative.ts in the engine.
 const AD_DURATION_SEC = 10;
 const POOL_SIZE = 50;
+const PALETTE = ['#4a90e2', '#f5a623', '#2da04a', '#e25a8f', '#8e6cf0', '#27b5b0'];
+const STYLES = ['sweep', 'zoom', 'pulse'] as const;
+const TAGLINE = 'Play it on SweetForge';
 
-function generateAdContent(gameTitle: string): string {
-  const escaped = gameTitle
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
-  return `<!DOCTYPE html>
-<html>
-<head><meta charset="utf-8">
-<style>
-  body { margin:0; padding:0; font-family:system-ui,sans-serif; background:#0a0a0a; color:#fff; display:flex; align-items:center; justify-content:center; min-height:100vh; overflow:hidden; }
-  .ad { text-align:center; padding:20px; max-width:400px; }
-  .badge { display:inline-block; background:#f5a623; color:#000; font-size:9px; font-weight:900; padding:2px 8px; border-radius:2px; letter-spacing:1px; margin-bottom:12px; text-transform:uppercase; }
-  .title { font-size:20px; font-weight:800; margin:0 0 8px; color:#fff; }
-  .sub { font-size:12px; color:#888; margin:0 0 16px; }
-  .tag { display:inline-block; color:#888; font-size:11px; }
-  .footer { position:fixed; bottom:8px; right:8px; font-size:9px; color:#444; }
-</style>
-</head>
-<body>
-  <div class="ad">
-    <span class="badge">Ad</span>
-    <h1 class="title">${escaped}</h1>
-    <p class="sub">Sponsored game on SweetForge</p>
-    <span class="tag">Use Remind me below to save this game</span>
-  </div>
-  <div class="footer">SweetForge Ads · ${AD_DURATION_SEC}s</div>
-</body>
-</html>`;
+function hash(s: string): number {
+  let h = 0;
+  for (const ch of s) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return h;
+}
+
+/**
+ * The server sends DATA only (~100 bytes). The engine draws the animated ad.
+ * No HTML, no image, no video is sent, so this costs almost no bandwidth.
+ */
+function buildCreative(gameId: string, gameTitle: string, tagline: string | null) {
+  const h = hash(gameId);
+  return {
+    title: gameTitle.slice(0, 40),
+    tagline: tagline && tagline.trim() ? tagline.trim().slice(0, 60) : TAGLINE,
+    accent: PALETTE[h % PALETTE.length],
+    style: STYLES[h % STYLES.length],
+  };
 }
 
 // GET /api/ads/next?exclude=id1,id2
@@ -74,7 +68,10 @@ export async function GET(req: NextRequest) {
       campaignId: campaign.id,
       gameId: campaign.gameId,
       gameTitle: campaign.gameTitle,
-      adContent: generateAdContent(campaign.gameTitle),
+      creative: {
+        ...buildCreative(campaign.gameId, campaign.gameTitle, campaign.adTagline),
+        imageUrl: campaign.adImageUrl || null,
+      },
       durationSec: AD_DURATION_SEC,
     },
   });
