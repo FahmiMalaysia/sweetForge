@@ -34,8 +34,10 @@ export async function GET() {
       }
     }
 
-    games.sort((a, b) => (b.publishedAt || 0) - (a.publishedAt || 0));
-    return NextResponse.json({ games, count: games.length });
+        games.sort((a, b) => (b.publishedAt || 0) - (a.publishedAt || 0));
+    return NextResponse.json({ games, count: games.length }, {
+      headers: { 'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=300' },
+    });
   } catch (e: any) {
     console.error('[/api/games] Error:', e);
     return NextResponse.json({ error: e.message, games: [], count: 0 }, { status: 500 });
