@@ -1,0 +1,159 @@
+// SweetForge API — Prisma schema (PostgreSQL / Neon)
+// Run once after setting DATABASE_URL:  npx prisma db push
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// Users — registered accounts + anonymous IP-based users
+// ============================================================
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  username      String    @unique
+  passwordHash  String
+  displayName   String?
+  storageQuota  Int       @default(10485760) // 10MB
+  storageUsed   Int       @default(0)
+  isAdmin       Boolean   @default(false)
+  isAnonymous   Boolean   @default(false)
+  sourceIp      String?
+  createdAt     DateTime  @default(now())
+  lastLoginAt   DateTime?
+
+  objects       Object[]
+  tokenBalance  TokenBalance?
+  progressEvents ProgressEvent[]
+  claimedRewards ClaimedReward[]
+  tokenTx       TokenTransaction[]
+  adCampaigns   AdCampaign[]
+  adPlays       AdPlay[]
+  notifications Notification[]
+
+  @@index([sourceIp, isAnonymous])
+}
+
+// ============================================================
+// Object storage — published game zips + meta files
+// Stored as base64 in DB (each user max 10MB)
+// ============================================================
+model Object {
+  id           String   @id @default(cuid())
+  userId       String
+  key          String
+  sizeBytes    Int      @default(0)
+  contentType  String   @default("application/octet-stream")
+  data         Bytes    // base64-encoded file content
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, key])
+  @@index([userId])
+  @@index([key])
+}
+
+// ============================================================
+// Token system
+// ============================================================
+model TokenBalance {
+  userId     String   @id
+  balance    Int      @default(0)
+  updatedAt  DateTime @updatedAt
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model ProgressEvent {
+  id        String   @id @default(cuid())
+  userId    String
+  eventType String
+  refId     String?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, eventType])
+}
+
+model ClaimedReward {
+  id            String   @id @default(cuid())
+  userId        String
+  rewardId      String
+  tokensAwarded Int      @default(1)
+  claimedAt     DateTime @default(now())
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, rewardId])
+}
+
+model TokenTransaction {
+  id        String   @id @default(cuid())
+  userId    String
+  delta     Int
+  reason    String
+  refId     String?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
+
+// ============================================================
+// Ads system
+// ============================================================
+model AdCampaign {
+  id               String    @id @default(cuid())
+  developerId      String
+  gameId           String
+  gameTitle        String
+  clicksPurchased  Int
+  clicksServed     Int       @default(0)
+  tokensPaid       Int       @default(0)
+  tokensEarned     Int       @default(0)
+  status           String    @default("active") // active | completed | cancelled
+  createdAt        DateTime  @default(now())
+  completedAt      DateTime?
+
+  developer        User      @relation(fields: [developerId], references: [id], onDelete: Cascade)
+  adPlays          AdPlay[]
+
+  @@index([status, developerId])
+  @@index([gameId])
+}
+
+model AdPlay {
+  id            String   @id @default(cuid())
+  campaignId    String
+  playerId      String
+  developerId   String
+  tokensEarned  Int      @default(2)
+  createdAt     DateTime @default(now())
+
+  campaign      AdCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  developer     User      @relation(fields: [developerId], references: [id], onDelete: Cascade)
+
+  @@index([developerId, createdAt])
+}
+
+// ============================================================
+// Notifications / Inbox
+// ============================================================
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  type      String
+  title     String
+  message   String?
+  refId     String?
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead, createdAt])
+}
