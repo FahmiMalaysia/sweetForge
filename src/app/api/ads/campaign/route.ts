@@ -4,9 +4,12 @@ import { resolveUser } from '@/lib/server/ipUser';
 import { getAuthUserId } from '@/lib/server/auth';
 import crypto from 'crypto';
 
-const TOKENS_PER_CLICK_COST = 4;
+// Must match src/lib/adsConfig.ts in the engine.
+const AD_BATCH_VIEWS = 100;
+const AD_COST_PER_BATCH = 8;
+const AD_MAX_BATCHES = 10;
 
-// POST /api/ads/campaign
+// POST /api/ads/campaign  { gameId, gameTitle, clicks }  (clicks = views, multiple of 100)
 export async function POST(req: NextRequest) {
   const authUserId = getAuthUserId(req);
   const user = await resolveUser(req, authUserId);
@@ -16,12 +19,15 @@ export async function POST(req: NextRequest) {
   if (!gameId || !gameTitle || !clicks) {
     return NextResponse.json({ error: 'Missing gameId, gameTitle, or clicks' }, { status: 400 });
   }
-  const clickCount = parseInt(clicks, 10);
-  if (isNaN(clickCount) || clickCount < 1 || clickCount > 1000) {
-    return NextResponse.json({ error: 'clicks must be 1-1000' }, { status: 400 });
+  const views = parseInt(clicks, 10);
+  if (isNaN(views) || views < AD_BATCH_VIEWS || views % AD_BATCH_VIEWS !== 0 || views > AD_BATCH_VIEWS * AD_MAX_BATCHES) {
+    return NextResponse.json(
+      { error: `clicks must be a multiple of ${AD_BATCH_VIEWS}, up to ${AD_BATCH_VIEWS * AD_MAX_BATCHES}` },
+      { status: 400 },
+    );
   }
 
-  const totalCost = clickCount * TOKENS_PER_CLICK_COST;
+  const totalCost = (views / AD_BATCH_VIEWS) * AD_COST_PER_BATCH;
   const bal = await prisma.tokenBalance.findUnique({ where: { userId: user.id } });
   const balance = bal?.balance || 0;
   if (balance < totalCost) {
@@ -49,7 +55,7 @@ export async function POST(req: NextRequest) {
           developerId: user.id,
           gameId,
           gameTitle,
-          clicksPurchased: clickCount,
+          clicksPurchased: views,
           tokensPaid: totalCost,
         },
       });
@@ -64,7 +70,7 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json({
     campaignId, gameId, gameTitle,
-    clicksPurchased: clickCount,
+    clicksPurchased: views,
     tokensPaid: totalCost,
     newBalance,
   }, { status: 201 });
