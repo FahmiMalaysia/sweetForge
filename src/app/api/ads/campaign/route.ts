@@ -5,7 +5,6 @@ import { getAuthUserId } from '@/lib/server/auth';
 import crypto from 'crypto';
 
 const TOKENS_PER_CLICK_COST = 4;
-const TOKENS_PER_AD_PLAY = 2;
 
 // POST /api/ads/campaign
 export async function POST(req: NextRequest) {
@@ -29,7 +28,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Insufficient tokens', needed: totalCost, balance }, { status: 402 });
   }
 
-    const campaignId = crypto.randomUUID();
+  const campaignId = crypto.randomUUID();
   let newBalance: number;
   try {
     newBalance = await prisma.$transaction(async (tx) => {
@@ -62,21 +61,6 @@ export async function POST(req: NextRequest) {
     }
     throw e;
   }
-    await tx.tokenTransaction.create({
-      data: { id: crypto.randomUUID(), userId: user.id, delta: -totalCost, reason: `ad_campaign:${campaignId}`, refId: gameId },
-    });
-    await tx.adCampaign.create({
-      data: {
-        id: campaignId,
-        developerId: user.id,
-        gameId,
-        gameTitle,
-        clicksPurchased: clickCount,
-        tokensPaid: totalCost,
-      },
-    });
-    return balance - totalCost;
-  });
 
   return NextResponse.json({
     campaignId, gameId, gameTitle,
