@@ -15,7 +15,8 @@
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'dev-only-secret-change-me';
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) throw new Error('JWT_SECRET is not set');
 const DIFFICULTY = 4; // 4 hex zeros = 65536 iterations average
 const CHALLENGE_TTL_SEC = 5 * 60; // 5 minutes
 
