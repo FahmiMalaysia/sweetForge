@@ -38,10 +38,11 @@ export async function GET(req: NextRequest) {
   const user = await resolveUser(req, authUserId);
   if (!user) return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
 
-  const campaign = await prisma.adCampaign.findFirst({
-    where: { status: 'active', clicksServed: { lt: prisma.adCampaign.fields.clicksPurchased } },
-    orderBy: { createdAt: 'asc' },
-  });
+    const rows = await prisma.$queryRaw<any[]>`
+    SELECT * FROM "AdCampaign"
+    WHERE status = 'active' AND "clicksServed" < "clicksPurchased"
+    ORDER BY "createdAt" ASC LIMIT 1`;
+  const campaign = rows[0];
 
   if (!campaign) return NextResponse.json({ hasAd: false });
 
