@@ -46,7 +46,7 @@ export async function GET(
     headers: {
       'Content-Type': obj.contentType,
       'Content-Length': String(obj.sizeBytes),
-      'Cache-Control': 'public, max-age=300',
+      'Cache-Control': 'private, max-age=300',
     },
   });
 }
