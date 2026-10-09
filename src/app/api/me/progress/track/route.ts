@@ -13,9 +13,14 @@ export async function POST(req: NextRequest) {
   const user = await resolveUser(req, authUserId);
   if (!user) return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
 
-  const { eventType, refId } = await req.json();
+    const { eventType, refId } = await req.json();
   if (!eventType || !VALID_EVENT_TYPES.has(eventType)) {
     return NextResponse.json({ error: 'Invalid eventType' }, { status: 400 });
+  }
+  // Hanya 'login' boleh dihantar dari client. Event lain mesti direkod oleh server
+  // semasa aksi sebenar berlaku, supaya tidak boleh dipalsukan untuk claim token.
+  if (eventType !== 'login') {
+    return NextResponse.json({ error: 'Event ini direkod oleh server' }, { status: 403 });
   }
 
   // Dedup by refId
