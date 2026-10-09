@@ -4,13 +4,17 @@ import { resolveUser } from '@/lib/server/ipUser';
 import { getAuthUserId } from '@/lib/server/auth';
 import crypto from 'crypto';
 
-// Token yang diterima developer HOST (game yang sedang dimainkan dan panggil play_ad).
-const TOKENS_PER_AD_PLAY = 2;
+// Must match src/lib/adsConfig.ts in the engine.
+const AD_HOST_PAYOUT_EVERY = 20; // developer dapat token setiap 20 tontonan
+const AD_HOST_PAYOUT_TOKENS = 1;
+
 // Pemain yang sama tak dikira berulang untuk kempen yang sama dalam tempoh ni.
 const DEDUPE_WINDOW_MS = 60 * 60 * 1000;
 const GAME_ID_RE = /^[A-Za-z0-9_.:-]{1,120}$/;
 
 // POST /api/ads/play  { campaignId, hostGameId }
+// Developer host dapat AD_HOST_PAYOUT_TOKENS token setiap AD_HOST_PAYOUT_EVERY tontonan
+// yang dikira untuk game dia. Pembayaran integer, tiada pecahan.
 export async function POST(req: NextRequest) {
   const authUserId = getAuthUserId(req);
   const user = await resolveUser(req, authUserId);
@@ -56,67 +60,69 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const completedNow = await prisma.$transaction(async (tx) => {
-      // 1) Tambah klik secara atomik: hanya berjaya jika kempen masih aktif dan belum habis.
+    const result = await prisma.$transaction(async (tx) => {
+      // 1) Tambah tontonan secara atomik: hanya berjaya jika kempen masih aktif dan belum habis.
       const inc = await tx.adCampaign.updateMany({
         where: {
           id: campaign.id,
           status: 'active',
           clicksServed: { lt: campaign.clicksPurchased },
         },
-        data: {
-          clicksServed: { increment: 1 },
-          tokensEarned: { increment: TOKENS_PER_AD_PLAY },
-        },
+        data: { clicksServed: { increment: 1 } },
       });
       if (inc.count === 0) throw new Error('CAMPAIGN_EXHAUSTED');
 
-      // 2) Tanda kempen selesai bila klik dah cukup.
-      const done = await tx.adCampaign.updateMany({
-        where: { id: campaign.id, status: 'active', clicksServed: { gte: campaign.clicksPurchased } },
-        data: { status: 'completed', completedAt: new Date() },
-      });
+      // 2) Kira tontonan untuk developer host (termasuk yang ini), kemudian tentukan bayaran.
+      const priorPlays = await tx.adPlay.count({ where: { developerId: hostDeveloperId } });
+      const hostCredit = (priorPlays + 1) % AD_HOST_PAYOUT_EVERY === 0 ? AD_HOST_PAYOUT_TOKENS : 0;
 
-      // 3) Kredit DEVELOPER HOST (bukan pembeli iklan).
-      await tx.tokenBalance.upsert({
-        where: { userId: hostDeveloperId },
-        create: { userId: hostDeveloperId, balance: TOKENS_PER_AD_PLAY },
-        update: { balance: { increment: TOKENS_PER_AD_PLAY } },
-      });
-      await tx.tokenTransaction.create({
-        data: {
-          id: crypto.randomUUID(),
-          userId: hostDeveloperId,
-          delta: TOKENS_PER_AD_PLAY,
-          reason: `ad_play:${campaign.id}`,
-          refId: hostGameId,
-        },
-      });
-
-      // 4) Rekod tontonan. developerId = host (penerima), supaya pending-tokens betul.
+      // 3) Rekod tontonan ini. tokensEarned = bayaran yang dibuat untuk tontonan ni (0 atau 2).
       await tx.adPlay.create({
         data: {
           id: crypto.randomUUID(),
           campaignId: campaign.id,
           playerId: user.id,
           developerId: hostDeveloperId,
-          tokensEarned: TOKENS_PER_AD_PLAY,
+          tokensEarned: hostCredit,
         },
       });
 
-      // 5) Notifikasi host.
-      await tx.notification.create({
-        data: {
-          id: crypto.randomUUID(),
-          userId: hostDeveloperId,
-          type: 'ad_play',
-          title: 'Ad Played',
-          message: `Game kau memainkan iklan "${campaign.gameTitle}". +${TOKENS_PER_AD_PLAY}T.`,
-          refId: hostGameId,
-        },
-      });
+      if (hostCredit > 0) {
+        await tx.tokenBalance.upsert({
+          where: { userId: hostDeveloperId },
+          create: { userId: hostDeveloperId, balance: hostCredit },
+          update: { balance: { increment: hostCredit } },
+        });
+        await tx.tokenTransaction.create({
+          data: {
+            id: crypto.randomUUID(),
+            userId: hostDeveloperId,
+            delta: hostCredit,
+            reason: `ad_play_batch:${hostGameId}`,
+            refId: hostGameId,
+          },
+        });
+        await tx.adCampaign.update({
+          where: { id: campaign.id },
+          data: { tokensEarned: { increment: hostCredit } },
+        });
+        await tx.notification.create({
+          data: {
+            id: crypto.randomUUID(),
+            userId: hostDeveloperId,
+            type: 'ad_play',
+            title: 'Ad Views Milestone',
+            message: `Your game reached ${AD_HOST_PAYOUT_EVERY} more ad views. +${hostCredit}T.`,
+            refId: hostGameId,
+          },
+        });
+      }
 
-      // 6) Kalau kempen selesai, beritahu pembeli.
+      // 5) Tanda kempen selesai bila tontonan dah cukup.
+      const done = await tx.adCampaign.updateMany({
+        where: { id: campaign.id, status: 'active', clicksServed: { gte: campaign.clicksPurchased } },
+        data: { status: 'completed', completedAt: new Date() },
+      });
       if (done.count > 0) {
         await tx.notification.create({
           data: {
@@ -124,20 +130,21 @@ export async function POST(req: NextRequest) {
             userId: campaign.developerId,
             type: 'campaign_completed',
             title: 'Campaign Completed',
-            message: `Kempen iklan "${campaign.gameTitle}" selesai.`,
+            message: `Your ad campaign for "${campaign.gameTitle}" has completed.`,
             refId: campaign.id,
           },
         });
       }
-      return done.count > 0;
+
+      return { hostCredit, completed: done.count > 0 };
     });
 
     return NextResponse.json({
       played: true,
       campaignId,
       hostGameId,
-      hostEarned: TOKENS_PER_AD_PLAY,
-      completed: completedNow,
+      hostEarned: result.hostCredit,
+      completed: result.completed,
     });
   } catch (e: any) {
     if (e?.message === 'CAMPAIGN_EXHAUSTED') {
