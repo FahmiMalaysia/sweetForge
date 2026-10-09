@@ -15,7 +15,13 @@ export async function POST(req: NextRequest) {
   const user = await resolveUser(req, authUserId);
   if (!user) return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
 
-  const { gameId, gameTitle, clicks } = await req.json();
+  const { gameId, gameTitle, clicks, tagline, imageUrl } = await req.json();
+  const adTagline = typeof tagline === 'string' && tagline.trim() ? tagline.trim().slice(0, 60) : null;
+  // Only a cover-image path of a game THIS user owns is accepted.
+  const imageMatch = typeof imageUrl === 'string'
+    ? /^\/api\/games\/([A-Za-z0-9_.:-]+)\/[A-Za-z0-9_.:-]+\/header(\?v=\d+)?$/.exec(imageUrl)
+    : null;
+  const adImageUrl = imageMatch && imageMatch[1] === user.id ? imageUrl : null;
   if (!gameId || !gameTitle || !clicks) {
     return NextResponse.json({ error: 'Missing gameId, gameTitle, or clicks' }, { status: 400 });
   }
@@ -57,6 +63,8 @@ export async function POST(req: NextRequest) {
           gameTitle,
           clicksPurchased: views,
           tokensPaid: totalCost,
+          adTagline,
+          adImageUrl,
         },
       });
       return after?.balance ?? 0;
