@@ -116,6 +116,8 @@ model AdCampaign {
   clicksServed     Int       @default(0)
   tokensPaid       Int       @default(0)
   tokensEarned     Int       @default(0)
+  adTagline        String?   // ayat pendek yang viewer nampak (dari tagline publish)
+  adImageUrl       String?   // URL gambar game (cache), bukan bytes gambar
   status           String    @default("active") // active | completed | cancelled
   createdAt        DateTime  @default(now())
   completedAt      DateTime?
