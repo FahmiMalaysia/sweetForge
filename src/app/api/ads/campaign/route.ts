@@ -29,13 +29,39 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Insufficient tokens', needed: totalCost, balance }, { status: 402 });
   }
 
-  const campaignId = crypto.randomUUID();
-  const newBalance = await prisma.$transaction(async (tx) => {
-    await tx.tokenBalance.upsert({
-      where: { userId: user.id },
-      create: { userId: user.id, balance: balance - totalCost },
-      update: { balance: balance - totalCost },
+    const campaignId = crypto.randomUUID();
+  let newBalance: number;
+  try {
+    newBalance = await prisma.$transaction(async (tx) => {
+      // Potong hanya jika baki masih cukup (atomik, tahan race dua permintaan serentak)
+      const dec = await tx.tokenBalance.updateMany({
+        where: { userId: user.id, balance: { gte: totalCost } },
+        data: { balance: { decrement: totalCost } },
+      });
+      if (dec.count === 0) throw new Error('INSUFFICIENT_TOKENS');
+
+      const after = await tx.tokenBalance.findUnique({ where: { userId: user.id } });
+      await tx.tokenTransaction.create({
+        data: { id: crypto.randomUUID(), userId: user.id, delta: -totalCost, reason: `ad_campaign:${campaignId}`, refId: gameId },
+      });
+      await tx.adCampaign.create({
+        data: {
+          id: campaignId,
+          developerId: user.id,
+          gameId,
+          gameTitle,
+          clicksPurchased: clickCount,
+          tokensPaid: totalCost,
+        },
+      });
+      return after?.balance ?? 0;
     });
+  } catch (e: any) {
+    if (e?.message === 'INSUFFICIENT_TOKENS') {
+      return NextResponse.json({ error: 'Insufficient tokens' }, { status: 402 });
+    }
+    throw e;
+  }
     await tx.tokenTransaction.create({
       data: { id: crypto.randomUUID(), userId: user.id, delta: -totalCost, reason: `ad_campaign:${campaignId}`, refId: gameId },
     });
