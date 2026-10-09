@@ -56,7 +56,7 @@ export function verifyChallenge(signedChallenge: string, nonce: number): boolean
   // Verify PoW: SHA-256(challenge + nonce) starts with "0000"
   const hash = crypto
     .createHash('sha256')
-    .update(payload.challenge + String(nonce))
+    .update(signedChallenge + String(nonce))
     .digest('hex');
   const prefix = '0'.repeat(DIFFICULTY);
   if (!hash.startsWith(prefix)) return false;
